@@ -1,117 +1,152 @@
-# Few-Shot Segmentation — Crack Detection in Radiographic Images
+# Few-Shot Segmentation — Detección de Grietas en Imágenes Radiográficas
 
-## Overview
+Framework de investigación para **segmentación few-shot de grietas** en imágenes radiográficas industriales.
 
-Research-grade framework for **few-shot segmentation of cracks** in radiographic images.
-
-The system learns to segment cracks from very few annotated examples (1–5 shots),
-using a **Siamese Encoder + Prototype Matching + U-Net Decoder** architecture.
+El sistema aprende a segmentar grietas a partir de muy pocos ejemplos anotados (1–5 shots), usando una arquitectura de **Encoder Siamés + Módulo de Prototipos + Decoder U-Net**.
 
 ---
 
-## Project Structure
+## Estructura del proyecto
 
 ```
 fewshot/
 ├── config/
 │   ├── __init__.py
-│   └── base_config.py          ← All configuration dataclasses
+│   └── base_config.py              ← Dataclasses de configuración global
 │
 ├── datasets/
 │   ├── __init__.py
-│   ├── episode_dataset.py      ← Episodic dataset (Step 7)
-│   └── preprocessing.py        ← 3-channel preprocessing pipeline
+│   ├── episode_dataset.py          ← Dataset episódico (formato .tiff)
+│   └── episode_dataset_png.py      ← Dataset episódico (formato .png)
 │
 ├── models/
 │   ├── __init__.py
+│   ├── fewshot_model.py            ← Modelo completo integrado
 │   ├── encoders/
 │   │   ├── __init__.py
-│   │   └── resnet_encoder.py   ← ResNet backbone wrapper (Step 2)
+│   │   └── resnet_encoder.py       ← Backbone ResNet con skip connections
 │   ├── fewshot/
 │   │   ├── __init__.py
-│   │   ├── prototype.py        ← Masked average pooling (Step 3)
-│   │   └── similarity.py       ← Cosine similarity maps (Step 4)
+│   │   ├── prototype_module.py     ← Masked Average Pooling → prototipo
+│   │   └── similarity.py          ← Mapas de similitud coseno
 │   └── decoders/
 │       ├── __init__.py
-│       └── unet_decoder.py     ← U-Net style decoder (Step 5)
+│       └── unet_decoder.py         ← Decoder estilo U-Net
 │
 ├── training/
 │   ├── __init__.py
-│   ├── trainer.py              ← Training loop (Step 8)
-│   └── losses.py               ← Dice + BCE loss (Step 8)
-│
-├── utils/
-│   ├── __init__.py
-│   ├── metrics.py              ← IoU, Dice score evaluation
-│   └── visualization.py        ← Episode visualization helpers
+│   ├── trainer.py                  ← Loop de entrenamiento episódico
+│   ├── losses.py                   ← Pérdida Dice + BCE ponderada
+│   └── metrics.py                  ← IoU, Dice score
 │
 ├── experiments/
 │   ├── __init__.py
-│   ├── baseline.py             ← Baseline experiment runner
-│   └── configs/
-│       └── baseline.py         ← Baseline experiment config
+│   └── baseline.py                 ← Experimento baseline
 │
-├── README.md
+├── utils/
+│   └── __init__.py
+│
+├── imagenes_inferencia/            ← Imágenes de ejemplo para inferencia
+│   ├── support_img.png
+│   ├── support_mask.png
+│   └── query_img.png
+│
+├── test/
+│   └── test_smoke.py               ← Tests de integración básicos
+│
+├── train.py                        ← Script principal de entrenamiento
+├── infer.py                        ← Script de inferencia por parches
 └── requirements.txt
 ```
 
 ---
 
-## Input Preprocessing
-
-Each radiographic image is converted to a 3-channel tensor:
-
-| Channel | Description             | Method                    |
-|---------|-------------------------|---------------------------|
-| 1       | Normalized radiograph   | Percentile clipping 1–99  |
-| 2       | Edge enhancement        | Unsharp mask              |
-| 3       | High-frequency filter   | Difference of Gaussians   |
-
-Final tensor shape: `3 × H × W`
-
----
-
-## Training Paradigm
-
-Training uses **episodic few-shot learning**.
-
-Each episode contains:
-- `support_image` + `support_mask` → used to compute the crack prototype
-- `query_image` + `query_mask` → the loss is computed **only** on this branch
-
-> **Critical rule:** The support mask is used **only** for prototype computation.
-> The loss is **never** computed on the support prediction.
-
----
-
-## Architecture
+## Arquitectura
 
 ```
-Support image ──→ Encoder ──→ Support features ──→ Prototype (crack + background)
-                                                           │
-Query image ───→ Encoder ──→ Query features ──→ Similarity maps ──→ Decoder ──→ Mask
-                    │                                                     ↑
-                    └──────────── skip connections ─────────────────────┘
+Imagen soporte ──→ Encoder ──→ Features soporte ──→ Prototipo (grieta + fondo)
+                                                            │
+Imagen query ───→ Encoder ──→ Features query ──→ Mapas similitud ──→ Decoder ──→ Máscara
+                    │                                                      ↑
+                    └──────────────── skip connections ───────────────────┘
 ```
 
----
+### Componentes clave
 
-## Development Steps
-
-| Step | Module              | Status  |
-|------|---------------------|---------|
-| 1    | Project structure   | ✅ Done  |
-| 2    | Encoder wrapper     | ⬜ TODO  |
-| 3    | Prototype module    | ⬜ TODO  |
-| 4    | Similarity module   | ⬜ TODO  |
-| 5    | Decoder             | ⬜ TODO  |
-| 6    | Full model          | ⬜ TODO  |
-| 7    | Episodic dataset    | ⬜ TODO  |
-| 8    | Training pipeline   | ⬜ TODO  |
+| Módulo | Descripción |
+|--------|-------------|
+| **ResNet Encoder** | Backbone preentrenado (resnet34/50), extrae features multiescala |
+| **Prototype Module** | Masked Average Pooling sobre features del soporte → vector prototipo |
+| **Similarity** | Similitud coseno entre prototipo y features de la query |
+| **U-Net Decoder** | Upsampling con skip connections, produce máscara binaria |
 
 ---
 
-## Requirements
+## Paradigma de entrenamiento
+
+Entrenamiento episódico — cada episodio contiene:
+
+- `imagen_soporte` + `máscara_soporte` → se usa para calcular el prototipo de grieta
+- `imagen_query` + `máscara_query` → el loss se calcula **únicamente** sobre este branch
+
+> **Regla crítica:** La máscara del soporte solo se usa para el cálculo del prototipo.
+> El loss **nunca** se aplica sobre la predicción del soporte.
+
+---
+
+## Preprocesamiento de entrada
+
+Cada imagen radiográfica se convierte a un tensor de 3 canales:
+
+| Canal | Descripción | Método |
+|-------|-------------|--------|
+| 1 | Radiografía normalizada | Clipping percentil 1–99 |
+| 2 | Realce de bordes | Unsharp mask |
+| 3 | Filtro de alta frecuencia | Diferencia de Gaussianas |
+
+Forma final del tensor: `3 × H × W`
+
+---
+
+## Uso
+
+### Entrenamiento
+
+```bash
+python train.py
+```
+
+La configuración se gestiona desde `config/base_config.py`: backbone, tamaño de parche, número de epochs, learning rate, etc. Los checkpoints se guardan en `checkpoints/`. **El tamaño de parche con el que se entrena determina el que debe usarse en inferencia.**
+
+### Inferencia sobre imágenes grandes
+
+El script `infer.py` divide la imagen query en parches del mismo tamaño usado durante el entrenamiento, infiere sobre cada uno y reconstruye la máscara a tamaño original. El tamaño de parche y el umbral de decisión se pasan como parámetros según cómo se configuró el entrenamiento.
+
+```bash
+python infer.py \
+  --support_img imagenes_inferencia/support_img.png \
+  --support_mask imagenes_inferencia/support_mask.png \
+  --query_img imagenes_inferencia/query_img.png \
+  --checkpoint checkpoints/baseline/best_model.pt \
+  --output results/ \
+  --patch_size <tamaño_de_parche_usado_en_entrenamiento> \
+  --threshold <umbral_entre_0_y_1>
+```
+
+**Salidas generadas en `results/`:**
+- `query.png` — imagen query original
+- `pred_mask.png` — máscara de grietas predicha
+- `overlay.png` — grietas en rojo sobre la imagen query
+
+---
+
+## Instalación
+
+```bash
+pip install -r requirements.txt
+```
+
+Dependencias principales:
 
 ```
 torch>=2.0
@@ -120,19 +155,21 @@ numpy
 opencv-python
 scikit-image
 albumentations
+pillow
 ```
 
 ---
 
-## Usage (future)
+## Estado del proyecto
 
-```python
-from config.base_config import FewShotConfig
-from experiments.baseline import run_experiment
-
-cfg = FewShotConfig()
-cfg.encoder.backbone = "resnet34"
-cfg.training.epochs = 100
-
-run_experiment(cfg)
-```
+| Componente | Estado |
+|---|---|
+| Encoder ResNet con skip connections | ✅ |
+| Módulo de prototipos (MAP) | ✅ |
+| Módulo de similitud coseno | ✅ |
+| Decoder U-Net | ✅ |
+| Modelo completo integrado | ✅ |
+| Dataset episódico (TIFF + PNG) | ✅ |
+| Pipeline de entrenamiento | ✅ |
+| Inferencia por parches en imágenes grandes | ✅ |
+| Tests de integración | ✅ |
