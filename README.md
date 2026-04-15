@@ -94,17 +94,12 @@ Entrenamiento episódico — cada episodio contiene:
 
 ---
 
-## Preprocesamiento de entrada
+## Datos de entrada
 
-Cada imagen radiográfica se convierte a un tensor de 3 canales:
+El modelo está diseñado para trabajar con imágenes de **3 canales** (RGB o similar) para ser compatible con los backbones de ResNet preentrenados.
 
-| Canal | Descripción | Método |
-|-------|-------------|--------|
-| 1 | Radiografía normalizada | Clipping percentil 1–99 |
-| 2 | Realce de bordes | Unsharp mask |
-| 3 | Filtro de alta frecuencia | Diferencia de Gaussianas |
-
-Forma final del tensor: `3 × H × W`
+- Si las imágenes de entrada son de 1 solo canal (escala de grises), se recomienda duplicarlas en 3 canales o modificar la primera capa convolucional del encoder en `models/encoders/resnet_encoder.py`.
+- El preprocesamiento específico (normalización, realce de bordes, etc.) debe realizarse externamente antes de alimentar el dataset, ya que este repositorio se enfoca en la arquitectura y el entrenamiento few-shot.
 
 ---
 
