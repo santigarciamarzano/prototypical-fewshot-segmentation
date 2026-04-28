@@ -37,6 +37,7 @@ class EncoderConfig:
     pretrained: bool = True
     in_channels: int = 3
     frozen_layers: List[str] = field(default_factory=list)
+    img_size: int = 256 # Solo usado para Swin, se ignora para ResNet
 
 
 # ---------------------------------------------------------------------------

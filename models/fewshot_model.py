@@ -28,21 +28,10 @@ import torch.nn as nn
 from typing import Dict
 
 from config.base_config import FewShotConfig
-from models.encoders.resnet_encoder import ResNetEncoder
+from models.encoders.encoder_factory import build_encoder
 from models.fewshot.prototype_module import PrototypeModule
 from models.fewshot.similarity import SimilarityModule
 from models.decoders.unet_decoder import UNetDecoder
-
-
-# Skip connection channels for each backbone, ordered layer3 → layer2 → layer1.
-# These are fixed by the ResNet architecture — not configurable.
-_SKIP_CHANNELS: Dict[str, list] = {
-    "resnet18": [256, 128, 64],
-    "resnet34": [256, 128, 64],
-    "resnet50": [1024, 512, 256],
-    "resnet101": [1024, 512, 256],
-}
-
 
 class FewShotModel(nn.Module):
     """End-to-end few-shot segmentation model.
@@ -68,7 +57,7 @@ class FewShotModel(nn.Module):
         super().__init__()
 
         # --- Encoder (Siamese — shared between support and query) ----------
-        self.encoder = ResNetEncoder(cfg.encoder)
+        self.encoder = build_encoder(cfg.encoder)
 
         # --- Few-shot branch -----------------------------------------------
         self.prototype = PrototypeModule(cfg.prototype)
@@ -77,9 +66,10 @@ class FewShotModel(nn.Module):
         # --- Decoder ---------------------------------------------------------
         # bottleneck_channels: layer4 output channels + 2 similarity channels.
         # skip_channels: fixed by backbone architecture, not by config.
+
         backbone = cfg.encoder.backbone
         bottleneck_channels = self.encoder.out_channels + 2
-        skip_channels = _SKIP_CHANNELS[backbone]
+        skip_channels = self.encoder.skip_channels  # ResNetEncoder fallback
 
         self.decoder = UNetDecoder(
             cfg=cfg.decoder,

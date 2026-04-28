@@ -20,7 +20,7 @@ Shapes (with input 3 × 256 × 256):
            B × 2048 ×  8 ×  8   (ResNet50)
 """
 
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import torch.nn as nn
@@ -33,6 +33,7 @@ from torchvision.models import (
 )
 
 from config.base_config import EncoderConfig
+from models.encoders.base_encoder import BaseEncoder
 
 
 # Mapping from backbone name → (model constructor, pretrained weights)
@@ -51,18 +52,28 @@ BACKBONE_OUT_CHANNELS: Dict[str, int] = {
     "resnet101": 2048,
 }
 
+_RESNET_SKIP_CHANNELS: Dict[str, List[int]] = {
+    "resnet18":  [256, 128, 64],
+    "resnet34":  [256, 128, 64],
+    "resnet50":  [1024, 512, 256],
+    "resnet101": [1024, 512, 256],
+}
 
-class ResNetEncoder(nn.Module):
+
+class ResNetEncoder(BaseEncoder):
     """Multi-scale ResNet encoder for few-shot segmentation.
-
+ 
     Wraps a torchvision ResNet and extracts feature maps at four scales.
     The first convolution layer is replaced to accept `in_channels` input
     (default 3 for our preprocessed radiographic images).
-
+ 
+    Inherits from BaseEncoder — fulfills the contract by implementing
+    forward() and the out_channels property.
+ 
     Args:
         cfg: EncoderConfig with backbone, pretrained, in_channels,
              and frozen_layers fields.
-
+ 
     Example:
         cfg = EncoderConfig(backbone="resnet34", pretrained=True, in_channels=3)
         encoder = ResNetEncoder(cfg)
@@ -111,12 +122,29 @@ class ResNetEncoder(nn.Module):
         self.layer3 = backbone.layer3  # 256 channels, stride 16
         self.layer4 = backbone.layer4  # 512/2048 ch,  stride 32
 
-        self.out_channels = BACKBONE_OUT_CHANNELS[cfg.backbone]
-
+        self._out_channels = BACKBONE_OUT_CHANNELS[cfg.backbone]
+        self._backbone_name = cfg.backbone
         # Freeze requested layers
         self._freeze_layers(cfg.frozen_layers)
 
+    # ------------------------------------------------------------------
+    # BaseEncoder contract
+    # ------------------------------------------------------------------
 
+    @property
+    def out_channels(self) -> int:
+        """Number of channels in layer4 output.
+ 
+        Returns:
+            512  for ResNet18/34
+            2048 for ResNet50/101
+        """
+        return self._out_channels
+    
+    @property
+    def skip_channels(self) -> List[int]:
+        return _RESNET_SKIP_CHANNELS[self._backbone_name]
+    
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Extract multi-scale features from input image tensor.
 

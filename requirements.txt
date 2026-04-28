@@ -1,6 +1,7 @@
 # Core deep learning
 torch>=2.0
 torchvision>=0.15
+timm>=0.9
 
 # Image processing
 numpy>=1.24

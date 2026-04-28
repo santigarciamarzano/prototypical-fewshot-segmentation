@@ -88,6 +88,86 @@ class TestResNetEncoder:
         with pytest.raises(ValueError, match="resnet999"):
             ResNetEncoder(cfg)
 
+# ---------------------------------------------------------------------------
+# Swin Encoder
+# ---------------------------------------------------------------------------
+
+class TestSwinEncoder:
+
+    def test_swin_tiny_output_shapes(self):
+        """layer1..layer4 shapes for Swin-Tiny with 256×256 input."""
+        from models.encoders.swin_encoder import SwinEncoder
+        cfg = EncoderConfig(backbone="swin_tiny_patch4_window7_224", pretrained=False)
+        encoder = SwinEncoder(cfg)
+        encoder.eval()
+
+        x = torch.randn(B, C_IMG, H, W)  # B × 3 × 256 × 256
+
+        with torch.no_grad():
+            features = encoder(x)
+
+        assert features["layer1"].shape == (B, 96,  64, 64), features["layer1"].shape
+        assert features["layer2"].shape == (B, 192, 32, 32), features["layer2"].shape
+        assert features["layer3"].shape == (B, 384, 16, 16), features["layer3"].shape
+        assert features["layer4"].shape == (B, 768,  8,  8), features["layer4"].shape
+
+    def test_out_channels(self):
+        """out_channels must match actual layer4 channels."""
+        from models.encoders.swin_encoder import SwinEncoder
+        cfg = EncoderConfig(backbone="swin_tiny_patch4_window7_224", pretrained=False)
+        encoder = SwinEncoder(cfg)
+
+        x = torch.randn(B, C_IMG, H, W)
+        with torch.no_grad():
+            features = encoder(x)
+
+        assert encoder.out_channels == features["layer4"].shape[1]
+
+    def test_skip_channels(self):
+        """skip_channels must match actual layer3, layer2, layer1 channels."""
+        from models.encoders.swin_encoder import SwinEncoder
+        cfg = EncoderConfig(backbone="swin_tiny_patch4_window7_224", pretrained=False)
+        encoder = SwinEncoder(cfg)
+
+        x = torch.randn(B, C_IMG, H, W)
+        with torch.no_grad():
+            features = encoder(x)
+
+        assert encoder.skip_channels[0] == features["layer3"].shape[1]  # layer3
+        assert encoder.skip_channels[1] == features["layer2"].shape[1]  # layer2
+        assert encoder.skip_channels[2] == features["layer1"].shape[1]  # layer1
+
+    def test_output_is_channels_first(self):
+        """All feature maps must be B × C × H × W, never channels-last."""
+        from models.encoders.swin_encoder import SwinEncoder
+        cfg = EncoderConfig(backbone="swin_tiny_patch4_window7_224", pretrained=False)
+        encoder = SwinEncoder(cfg)
+        encoder.eval()
+
+        x = torch.randn(B, C_IMG, H, W)
+        with torch.no_grad():
+            features = encoder(x)
+
+        for key, feat in features.items():
+            # channels-first: C dimension (dim 1) must be smaller than H, W
+            _, C, fH, fW = feat.shape
+            assert feat.ndim == 4, f"{key} must be 4D, got {feat.ndim}D"
+            assert fH == fW, f"{key} spatial dims must be square, got {fH}×{fW}"
+
+    def test_no_nan_or_inf(self):
+        """Forward pass must not produce NaN or inf."""
+        from models.encoders.swin_encoder import SwinEncoder
+        cfg = EncoderConfig(backbone="swin_tiny_patch4_window7_224", pretrained=False)
+        encoder = SwinEncoder(cfg)
+        encoder.eval()
+
+        x = torch.randn(B, C_IMG, H, W)
+        with torch.no_grad():
+            features = encoder(x)
+
+        for key, feat in features.items():
+            assert not torch.isnan(feat).any(), f"NaN in {key}"
+            assert not torch.isinf(feat).any(), f"Inf in {key}"
 
 # ---------------------------------------------------------------------------
 # Prototype module
@@ -305,6 +385,23 @@ class TestFewShotModel:
         """Swapping backbone to ResNet50 must work without touching any other config."""
         cfg = get_baseline_config()
         cfg.encoder.backbone   = "resnet50"
+        cfg.encoder.pretrained = False
+        model = FewShotModel(cfg)
+        model.eval()
+
+        support_img  = torch.randn(B, 3, H, W)
+        support_mask = torch.randint(0, 2, (B, 1, H, W)).float()
+        query_img    = torch.randn(B, 3, H, W)
+
+        with torch.no_grad():
+            logits = model(support_img, support_mask, query_img)
+
+        assert logits.shape == (B, 1, H, W), logits.shape
+
+    def test_swin_tiny_forward_pass(self):
+        """Full forward pass with Swin-Tiny must produce correct output shape."""
+        cfg = get_baseline_config()
+        cfg.encoder.backbone = "swin_tiny_patch4_window7_224"
         cfg.encoder.pretrained = False
         model = FewShotModel(cfg)
         model.eval()
