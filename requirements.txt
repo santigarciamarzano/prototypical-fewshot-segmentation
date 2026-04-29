@@ -3,13 +3,12 @@ torch>=2.0
 torchvision>=0.15
 timm>=0.9
 
-# Image processing
 numpy>=1.24
 opencv-python>=4.7
 scikit-image>=0.21
 
-# Augmentations
 albumentations>=1.3
 
-# Utilities
 tqdm>=4.65
+
+matplotlib>=3.7
