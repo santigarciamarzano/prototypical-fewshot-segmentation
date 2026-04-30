@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers",   type=int,   default=4,    help="DataLoader num_workers.")
     parser.add_argument("--batch_size",  type=int,   default=None, help="Batch size (episodes per gradient update).")
     parser.add_argument("--frozen_layers", type=str, default=None, help="Capas a congelar separadas por coma. Ej: layer1 o layer1,layer2")
+    parser.add_argument("--format", type=str, default="png", choices=["png", "tiff"], help="Formato del dataset: png (8bit) o tiff (16bit). Default: png")
 
     return parser.parse_args()
 
@@ -60,7 +61,10 @@ def apply_overrides(cfg: FewShotConfig, args: argparse.Namespace) -> FewShotConf
         cfg.training.device = args.device
     if args.frozen_layers is not None:
         cfg.encoder.frozen_layers = args.frozen_layers.split(",")
-
+    if args.format is not None:
+        cfg.dataset.format = args.format
+    if args.format is not None:
+        cfg.dataset.image_format = args.format
     return cfg
 
 
@@ -73,9 +77,11 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def build_dataloader(cfg: FewShotConfig, split: str, workers: int) -> DataLoader:
+def build_dataloader(cfg: FewShotConfig, split: str, workers: int, format="png") -> DataLoader:
     """Crea el EpisodicDataset y lo envuelve en un DataLoader."""
-    dataset = EpisodicDatasetPNG(cfg.dataset, split=split)
+    dataset_cls = EpisodicDatasetPNG if format == "png" else EpisodicDataset
+    dataset = dataset_cls(cfg.dataset, split=split)
+    ...
 
     return DataLoader(
         dataset,
@@ -101,8 +107,8 @@ def main() -> None:
     print(f"Epochs:     {cfg.training.epochs}")
     print()
 
-    train_loader = build_dataloader(cfg, split="train", workers=args.workers)
-    val_loader   = build_dataloader(cfg, split="val",   workers=args.workers)
+    train_loader = build_dataloader(cfg, split="train", workers=args.workers, format=args.format)
+    val_loader   = build_dataloader(cfg, split="val",   workers=args.workers, format=args.format)
 
     print(f"Train episodes: {len(train_loader.dataset)}")
     print(f"Val episodes:   {len(val_loader.dataset)}")

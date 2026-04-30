@@ -125,6 +125,7 @@ class DatasetConfig:
     """
     data_root: str = "data/"
     image_size: Tuple[int, int] = (256, 256)
+    image_format: str = "png"
     n_way: int = 1
     k_shot: int = 1
     n_query: int = 1
