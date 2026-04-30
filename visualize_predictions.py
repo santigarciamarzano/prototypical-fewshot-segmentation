@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
                         help="Formato del dataset: png o tiff. Default: png")
     parser.add_argument("--seed",       type=int, default=42,
                         help="Semilla para reproducibilidad. Default: 42")
+    
     return parser.parse_args()
 
 

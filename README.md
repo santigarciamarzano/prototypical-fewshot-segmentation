@@ -1,8 +1,8 @@
-# Few-Shot Segmentation — Detección de Grietas en Imágenes Radiográficas
+# Few-Shot Segmentation — Detección de Defectos en Imágenes Industriales
 
-Framework de investigación para **segmentación few-shot de grietas** en imágenes radiográficas industriales.
+Framework para **segmentación few-shot de defectos** en imágenes industriales.
 
-El sistema aprende a segmentar grietas a partir de muy pocos ejemplos anotados (1–5 shots), usando una arquitectura de **Encoder Siamés + Módulo de Prototipos + Decoder U-Net**.
+El sistema aprende a segmentar defectos a partir de muy pocos ejemplos anotados (1–5 shots), usando una arquitectura de **Encoder Siamés + Módulo de Prototipos + Decoder U-Net**. Está diseñado para ser agnóstico al dominio — aunque el caso de uso inicial son grietas en imágenes radiográficas, puede adaptarse a cualquier tipo de defecto con mínimos cambios.
 
 ---
 
@@ -16,15 +16,18 @@ fewshot/
 │
 ├── datasets/
 │   ├── __init__.py
-│   ├── episode_dataset.py          ← Dataset episódico (formato .tiff)
-│   └── episode_dataset_png.py      ← Dataset episódico (formato .png)
+│   ├── episode_dataset.py          ← Dataset episódico (formato .tiff, 16bit)
+│   └── episode_dataset_png.py      ← Dataset episódico (formato .png, 8bit)
 │
 ├── models/
 │   ├── __init__.py
 │   ├── fewshot_model.py            ← Modelo completo integrado
 │   ├── encoders/
 │   │   ├── __init__.py
-│   │   └── resnet_encoder.py       ← Backbone ResNet con skip connections
+│   │   ├── base_encoder.py         ← Contrato abstracto para todos los encoders
+│   │   ├── resnet_encoder.py       ← Backbone ResNet con skip connections
+│   │   ├── swin_encoder.py         ← Backbone Swin Transformer via timm
+│   │   └── encoder_factory.py      ← Factory — build_encoder(cfg)
 │   ├── fewshot/
 │   │   ├── __init__.py
 │   │   ├── prototype_module.py     ← Masked Average Pooling → prototipo
@@ -46,17 +49,12 @@ fewshot/
 ├── utils/
 │   └── __init__.py
 │
-├── imagenes_inferencia/            ← Imágenes de ejemplo para inferencia
-│   ├── support_img.png
-│   ├── support_mask.png
-│   └── query_img.png
-│
 ├── test/
 │   └── test_smoke.py               ← Tests de integración básicos
 │
 ├── train.py                        ← Script principal de entrenamiento
 ├── infer.py                        ← Script de inferencia por parches
-└── requirements.txt
+└── visualize_predictions.py        ← Visualización de predicciones sobre val set
 ```
 
 ---
@@ -64,7 +62,7 @@ fewshot/
 ## Arquitectura
 
 ```
-Imagen soporte ──→ Encoder ──→ Features soporte ──→ Prototipo (grieta + fondo)
+Imagen soporte ──→ Encoder ──→ Features soporte ──→ Prototipo (defecto + fondo)
                                                             │
 Imagen query ───→ Encoder ──→ Features query ──→ Mapas similitud ──→ Decoder ──→ Máscara
                     │                                                      ↑
@@ -75,10 +73,37 @@ Imagen query ───→ Encoder ──→ Features query ──→ Mapas simil
 
 | Módulo | Descripción |
 |--------|-------------|
-| **ResNet Encoder** | Backbone preentrenado (resnet34/50), extrae features multiescala |
+| **BaseEncoder** | Contrato abstracto — cualquier encoder debe implementarlo |
+| **ResNetEncoder** | Backbone torchvision (resnet18/34/50/101), extrae features multiescala |
+| **SwinEncoder** | Backbone Swin Transformer via timm, soporta cualquier modelo con features_only |
+| **EncoderFactory** | `build_encoder(cfg)` — único punto de entrada para instanciar encoders |
 | **Prototype Module** | Masked Average Pooling sobre features del soporte → vector prototipo |
 | **Similarity** | Similitud coseno entre prototipo y features de la query |
 | **U-Net Decoder** | Upsampling con skip connections, produce máscara binaria |
+
+---
+
+## Backbones soportados
+
+### ResNet (torchvision)
+
+| Backbone | Canales layer4 | Skip channels (l3/l2/l1) |
+|----------|---------------|--------------------------|
+| resnet18 | 512 | 256 / 128 / 64 |
+| resnet34 | 512 | 256 / 128 / 64 |
+| resnet50 | 2048 | 1024 / 512 / 256 |
+| resnet101 | 2048 | 1024 / 512 / 256 |
+
+### Swin Transformer (timm)
+
+| Backbone | Canales layer4 | Skip channels (l3/l2/l1) |
+|----------|---------------|--------------------------|
+| swin_tiny_patch4_window7_224 | 768 | 384 / 192 / 96 |
+| swin_small_patch4_window7_224 | 768 | 384 / 192 / 96 |
+| swin_base_patch4_window7_224 | 1024 | 512 / 256 / 128 |
+| swin_large_patch4_window7_224 | 1536 | 768 / 384 / 192 |
+
+Cualquier backbone de timm que soporte `features_only=True` funciona — ConvNeXt, EfficientNet, etc.
 
 ---
 
@@ -86,7 +111,7 @@ Imagen query ───→ Encoder ──→ Features query ──→ Mapas simil
 
 Entrenamiento episódico — cada episodio contiene:
 
-- `imagen_soporte` + `máscara_soporte` → se usa para calcular el prototipo de grieta
+- `imagen_soporte` + `máscara_soporte` → se usa para calcular el prototipo de defecto
 - `imagen_query` + `máscara_query` → el loss se calcula **únicamente** sobre este branch
 
 > **Regla crítica:** La máscara del soporte solo se usa para el cálculo del prototipo.
@@ -94,12 +119,14 @@ Entrenamiento episódico — cada episodio contiene:
 
 ---
 
-## Datos de entrada
+## Formatos de imagen soportados
 
-El modelo está diseñado para trabajar con imágenes de **3 canales** (RGB o similar) para ser compatible con los backbones de ResNet preentrenados.
+| Formato | Profundidad | Dataset class |
+|---------|-------------|---------------|
+| PNG | 8 bit | `EpisodicDatasetPNG` |
+| TIFF | 16 bit | `EpisodicDataset` |
 
-- Si las imágenes de entrada son de 1 solo canal (escala de grises), se recomienda duplicarlas en 3 canales o modificar la primera capa convolucional del encoder en `models/encoders/resnet_encoder.py`.
-- El preprocesamiento específico (normalización, realce de bordes, etc.) debe realizarse externamente antes de alimentar el dataset, ya que este repositorio se enfoca en la arquitectura y el entrenamiento few-shot.
+Ambos se normalizan a float32 en [0, 1] antes de entrar al modelo. El backbone no distingue el formato de origen.
 
 ---
 
@@ -108,14 +135,26 @@ El modelo está diseñado para trabajar con imágenes de **3 canales** (RGB o si
 ### Entrenamiento
 
 ```bash
-python train.py
+# PNG 8bit + ResNet34 (default)
+python train.py --format png --backbone resnet34 --data data/ --epochs 100
+
+# TIFF 16bit + Swin-Tiny
+python train.py --format tiff --backbone swin_tiny_patch4_window7_224 --data data/ --epochs 100
+
+# Con más opciones
+python train.py \
+  --format png \
+  --backbone swin_tiny_patch4_window7_224 \
+  --data data/ \
+  --epochs 100 \
+  --lr 1e-4 \
+  --device cuda \
+  --batch_size 4
 ```
 
-La configuración se gestiona desde `config/base_config.py`: backbone, tamaño de parche, número de epochs, learning rate, etc. Los checkpoints se guardan en `checkpoints/`. **El tamaño de parche con el que se entrena determina el que debe usarse en inferencia.**
+Los checkpoints se guardan en `checkpoints/` con su JSON de configuración completo.
 
 ### Inferencia sobre imágenes grandes
-
-El script `infer.py` divide la imagen query en parches del mismo tamaño usado durante el entrenamiento, infiere sobre cada uno y reconstruye la máscara a tamaño original. El tamaño de parche y el umbral de decisión se pasan como parámetros según cómo se configuró el entrenamiento.
 
 ```bash
 python infer.py \
@@ -124,14 +163,27 @@ python infer.py \
   --query_img imagenes_inferencia/query_img.png \
   --checkpoint checkpoints/baseline/best_model.pt \
   --output results/ \
-  --patch_size <tamaño_de_parche_usado_en_entrenamiento> \
-  --threshold <umbral_entre_0_y_1>
+  --threshold 0.5
 ```
 
-**Salidas generadas en `results/`:**
+**Salidas en `results/`:**
 - `query.png` — imagen query original
-- `pred_mask.png` — máscara de grietas predicha
-- `overlay.png` — grietas en rojo sobre la imagen query
+- `pred_mask.png` — máscara de defectos predicha
+- `overlay.png` — defectos en rojo sobre la imagen query
+
+### Visualización de predicciones
+
+```bash
+python visualize_predictions.py \
+  --checkpoint checkpoints/baseline/best_model.pt \
+  --data data/ \
+  --n_episodes 8 \
+  --threshold 0.5 \
+  --format png \
+  --output results/viz.png
+```
+
+Genera una grilla PNG con columnas: support | query | ground truth | predicción.
 
 ---
 
@@ -146,25 +198,22 @@ Dependencias principales:
 ```
 torch>=2.0
 torchvision>=0.15
+timm>=0.9
 numpy
-opencv-python
-scikit-image
-albumentations
 pillow
+albumentations
+matplotlib
 ```
 
 ---
 
-## Estado del proyecto
+## Tests
 
-| Componente | Estado |
-|---|---|
-| Encoder ResNet con skip connections | ✅ |
-| Módulo de prototipos (MAP) | ✅ |
-| Módulo de similitud coseno | ✅ |
-| Decoder U-Net | ✅ |
-| Modelo completo integrado | ✅ |
-| Dataset episódico (TIFF + PNG) | ✅ |
-| Pipeline de entrenamiento | ✅ |
-| Inferencia por parches en imágenes grandes | ✅ |
-| Tests de integración | ✅ |
+```bash
+python -m pytest test/test_smoke.py -v
+```
+
+25 tests — cubre todos los módulos incluyendo ResNet y Swin end-to-end.
+
+---
+
